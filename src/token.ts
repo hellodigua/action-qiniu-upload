@@ -1,10 +1,10 @@
-import qiniu from "qiniu";
+import qiniu from 'qiniu';
 
 export function genToken(
   bucket: string,
   ak: string,
   sk: string,
-  key?: string
+  key?: string,
 ): string {
   const mac = new qiniu.auth.digest.Mac(ak, sk);
 
