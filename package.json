@@ -7,7 +7,7 @@
   "scripts": {
     "build": "tsc",
     "lint": "eslint src/**/*.ts",
-    "pack": "ncc build",
+    "pack": "ncc build lib/main.js -o dist",
     "test": "jest --passWithNoTests",
     "all": "npm run build && npm run lint && npm run pack && npm test"
   },
@@ -35,7 +35,7 @@
     "@types/node": "^13.1.0",
     "@typescript-eslint/eslint-plugin": "^2.13.0",
     "@typescript-eslint/parser": "^2.13.0",
-    "@zeit/ncc": "^0.20.5",
+    "@vercel/ncc": "^0.38.3",
     "eslint": "^6.1.0",
     "eslint-config-airbnb": "^18.0.1",
     "eslint-plugin-import": "^2.19.1",
