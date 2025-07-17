@@ -44,14 +44,38 @@ export function upload(
 
         const putExtra = new qiniu.form_up.PutExtra();
         uploader.putFile(token, key, file, putExtra, (err, body, info) => {
-          if (err) return reject(new Error(`Upload failed: ${file}`));
+          // 构建详细的错误信息
+          const fileInfo = `file: ${file}, key: ${key}, overwrite: ${overwrite}`;
+
+          if (err) {
+            const errorMessage = `Upload failed - ${fileInfo}, error: ${err.message || err}, stack: ${err.stack || 'no stack'}`;
+            return reject(new Error(errorMessage));
+          }
+
+          // 检查HTTP状态码
+          if (!info || typeof info.statusCode === 'undefined') {
+            const errorMessage = `Upload failed - ${fileInfo}, reason: no response info received`;
+            return reject(new Error(errorMessage));
+          }
 
           if (info.statusCode === 200) {
             onProgress(file, key);
             return resolve({ file, to: key });
           }
 
-          reject(new Error(`Upload failed: ${file}`));
+          // 其他状态码的详细错误信息
+          let errorDetails = '';
+          if (body) {
+            try {
+              const bodyStr = typeof body === 'string' ? body : JSON.stringify(body);
+              errorDetails = `, response body: ${bodyStr}`;
+            } catch (e) {
+              errorDetails = ', response body: [unable to serialize]';
+            }
+          }
+
+          const errorMessage = `Upload failed - ${fileInfo}, status code: ${info.statusCode}${errorDetails}`;
+          reject(new Error(errorMessage));
         });
       });
 
