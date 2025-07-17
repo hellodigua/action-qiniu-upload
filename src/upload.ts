@@ -1,21 +1,25 @@
-import qiniu from 'qiniu';
-import path from 'path';
-import glob from 'glob';
-import pAll from 'p-all';
-import pRetry from 'p-retry';
+import qiniu from "qiniu";
+import path from "path";
+import glob from "glob";
+import pAll from "p-all";
+import pRetry from "p-retry";
+import { genToken } from "./token";
 
 function normalizePath(input: string): string {
-  return input.replace(/^\//, '');
+  return input.replace(/^\//, "");
 }
 
 export function upload(
-  token: string,
+  ak: string,
+  sk: string,
+  bucket: string,
   srcDir: string,
   destDir: string,
+  overwrite: boolean,
   ignoreSourceMap: boolean,
   onProgress: (srcFile: string, destFile: string) => void,
   onComplete: () => void,
-  onFail: (errorInfo: any) => void,
+  onFail: (errorInfo: any) => void
 ): void {
   const baseDir = path.resolve(process.cwd(), srcDir);
   const files = glob.sync(`${baseDir}/**/*`, { nodir: true });
@@ -23,30 +27,38 @@ export function upload(
   const config = new qiniu.conf.Config();
   const uploader = new qiniu.form_up.FormUploader(config);
 
-  const tasks = files.map((file) => {
-    const relativePath = path.relative(baseDir, path.dirname(file));
-    const key = normalizePath(path.join(destDir, relativePath, path.basename(file)));
+  const tasks = files
+    .map((file) => {
+      const relativePath = path.relative(baseDir, path.dirname(file));
+      const key = normalizePath(
+        path.join(destDir, relativePath, path.basename(file))
+      );
 
-    if (ignoreSourceMap && file.endsWith('.map')) return null;
+      if (ignoreSourceMap && file.endsWith(".map")) return null;
 
-    const task = (): Promise<any> => new Promise((resolve, reject) => {
-      const putExtra = new qiniu.form_up.PutExtra();
-      uploader.putFile(token, key, file, putExtra, (err, body, info) => {
-        if (err) return reject(new Error(`Upload failed: ${file}`));
+      const task = (): Promise<any> =>
+        new Promise((resolve, reject) => {
+          // 根据是否覆盖生成不同的token
+          const token = overwrite
+            ? genToken(bucket, ak, sk, key)
+            : genToken(bucket, ak, sk);
 
-        if (info.statusCode === 200) {
-          onProgress(file, key);
-          return resolve({ file, to: key });
-        }
+          const putExtra = new qiniu.form_up.PutExtra();
+          uploader.putFile(token, key, file, putExtra, (err, body, info) => {
+            if (err) return reject(new Error(`Upload failed: ${file}`));
 
-        reject(new Error(`Upload failed: ${file}`));
-      });
-    });
+            if (info.statusCode === 200) {
+              onProgress(file, key);
+              return resolve({ file, to: key });
+            }
 
-    return () => pRetry(task, { retries: 3 });
-  }).filter((item) => !!item) as (() => Promise<any>)[];
+            reject(new Error(`Upload failed: ${file}`));
+          });
+        });
 
-  pAll(tasks, { concurrency: 5 })
-    .then(onComplete)
-    .catch(onFail);
+      return () => pRetry(task, { retries: 3 });
+    })
+    .filter((item) => !!item) as (() => Promise<any>)[];
+
+  pAll(tasks, { concurrency: 5 }).then(onComplete).catch(onFail);
 }
