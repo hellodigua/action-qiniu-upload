@@ -27,6 +27,9 @@ inputs:
     description: "ignore source maps"
     default: "true"
     required: false
+  cdn_domain:
+    description: "CDN domain for refreshing HTML files (e.g., https://your-cdn-domain.com)"
+    required: false
 runs:
   using: "node12"
   main: "dist/index.js"

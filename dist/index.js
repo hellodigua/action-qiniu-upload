@@ -47,7 +47,8 @@ function run() {
             const destDir = core.getInput('dest_dir');
             const overwrite = core.getInput('overwrite') === 'true';
             const ignoreSourceMap = core.getInput('ignore_source_map') === 'true';
-            upload_1.upload(ak, sk, bucket, sourceDir, destDir, overwrite, ignoreSourceMap, (file, key) => core.info(`Success: ${file} => [${bucket}]: ${key}`), () => core.info('Done!'), (error) => core.setFailed(error.message));
+            const cdnDomain = core.getInput('cdn_domain');
+            upload_1.upload(ak, sk, bucket, sourceDir, destDir, overwrite, ignoreSourceMap, cdnDomain, (file, key) => core.info(`Success: ${file} => [${bucket}]: ${key}`), () => core.info('Done!'), (error) => core.setFailed(error.message));
         }
         catch (error) {
             core.setFailed(error.message);
@@ -88,6 +89,15 @@ exports.genToken = genToken;
 
 "use strict";
 
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -102,31 +112,56 @@ const token_1 = __nccwpck_require__(9961);
 function normalizePath(input) {
     return input.replace(/^\//, '');
 }
-function upload(ak, sk, bucket, srcDir, destDir, overwrite, ignoreSourceMap, onProgress, onComplete, onFail) {
+function refreshHtmlFiles(ak, sk, cdnDomain, htmlFiles) {
+    return new Promise((resolve, reject) => {
+        if (!cdnDomain || htmlFiles.length === 0) {
+            return resolve();
+        }
+        const mac = new qiniu_1.default.auth.digest.Mac(ak, sk);
+        const cdnManager = new qiniu_1.default.cdn.CdnManager(mac);
+        const urlsToRefresh = htmlFiles.map(file => `${cdnDomain}/${file}`);
+        cdnManager.refreshUrls(urlsToRefresh, (err, respBody, respInfo) => {
+            if (err) {
+                return reject(err);
+            }
+            if (respInfo.statusCode === 200) {
+                htmlFiles.forEach(file => {
+                    console.log(`${file} 刷新成功`);
+                });
+                resolve();
+            }
+            else {
+                reject(new Error(`CDN刷新失败，状态码: ${respInfo.statusCode}`));
+            }
+        });
+    });
+}
+function upload(ak, sk, bucket, srcDir, destDir, overwrite, ignoreSourceMap, cdnDomain, onProgress, onComplete, onFail) {
     const baseDir = path_1.default.resolve(process.cwd(), srcDir);
     const files = glob_1.default.sync(`${baseDir}/**/*`, { nodir: true });
     const config = new qiniu_1.default.conf.Config();
     const uploader = new qiniu_1.default.form_up.FormUploader(config);
+    const htmlFiles = [];
     const tasks = files
         .map((file) => {
         const relativePath = path_1.default.relative(baseDir, path_1.default.dirname(file));
         const key = normalizePath(path_1.default.join(destDir, relativePath, path_1.default.basename(file)));
         if (ignoreSourceMap && file.endsWith('.map'))
             return null;
+        if (file.endsWith('.html')) {
+            htmlFiles.push(key);
+        }
         const task = () => new Promise((resolve, reject) => {
-            // 根据是否覆盖生成不同的token
             const token = overwrite
                 ? token_1.genToken(bucket, ak, sk, key)
                 : token_1.genToken(bucket, ak, sk);
             const putExtra = new qiniu_1.default.form_up.PutExtra();
             uploader.putFile(token, key, file, putExtra, (err, body, info) => {
-                // 构建详细的错误信息
                 const fileInfo = `file: ${file}, key: ${key}, overwrite: ${overwrite}`;
                 if (err) {
                     const errorMessage = `Upload failed - ${fileInfo}, error: ${err.message || err}, stack: ${err.stack || 'no stack'}`;
                     return reject(new Error(errorMessage));
                 }
-                // 检查HTTP状态码
                 if (!info || typeof info.statusCode === 'undefined') {
                     const errorMessage = `Upload failed - ${fileInfo}, reason: no response info received`;
                     return reject(new Error(errorMessage));
@@ -135,7 +170,6 @@ function upload(ak, sk, bucket, srcDir, destDir, overwrite, ignoreSourceMap, onP
                     onProgress(file, key);
                     return resolve({ file, to: key });
                 }
-                // 其他状态码的详细错误信息
                 let errorDetails = '';
                 if (body) {
                     try {
@@ -153,7 +187,19 @@ function upload(ak, sk, bucket, srcDir, destDir, overwrite, ignoreSourceMap, onP
         return () => p_retry_1.default(task, { retries: 3 });
     })
         .filter((item) => !!item);
-    p_all_1.default(tasks, { concurrency: 5 }).then(onComplete).catch(onFail);
+    p_all_1.default(tasks, { concurrency: 5 })
+        .then(() => __awaiter(this, void 0, void 0, function* () {
+        if (htmlFiles.length > 0) {
+            try {
+                yield refreshHtmlFiles(ak, sk, cdnDomain, htmlFiles);
+            }
+            catch (error) {
+                console.error('HTML文件刷新失败:', error);
+            }
+        }
+        onComplete();
+    }))
+        .catch(onFail);
 }
 exports.upload = upload;
 

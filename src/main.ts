@@ -10,6 +10,7 @@ async function run(): Promise<void> {
     const destDir = core.getInput('dest_dir');
     const overwrite = core.getInput('overwrite') === 'true';
     const ignoreSourceMap = core.getInput('ignore_source_map') === 'true';
+    const cdnDomain = core.getInput('cdn_domain');
 
     upload(
       ak,
@@ -19,6 +20,7 @@ async function run(): Promise<void> {
       destDir,
       overwrite,
       ignoreSourceMap,
+      cdnDomain,
       (file, key) => core.info(`Success: ${file} => [${bucket}]: ${key}`),
       () => core.info('Done!'),
       (error) => core.setFailed(error.message),

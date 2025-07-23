@@ -9,6 +9,39 @@ function normalizePath(input: string): string {
   return input.replace(/^\//, '');
 }
 
+function refreshHtmlFiles(
+  ak: string,
+  sk: string,
+  cdnDomain: string,
+  htmlFiles: string[],
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (!cdnDomain || htmlFiles.length === 0) {
+      return resolve();
+    }
+
+    const mac = new qiniu.auth.digest.Mac(ak, sk);
+    const cdnManager = new qiniu.cdn.CdnManager(mac);
+    
+    const urlsToRefresh = htmlFiles.map(file => `${cdnDomain}/${file}`);
+    
+    cdnManager.refreshUrls(urlsToRefresh, (err, respBody, respInfo) => {
+      if (err) {
+        return reject(err);
+      }
+      
+      if (respInfo.statusCode === 200) {
+        htmlFiles.forEach(file => {
+          console.log(`${file} 刷新成功`);
+        });
+        resolve();
+      } else {
+        reject(new Error(`CDN刷新失败，状态码: ${respInfo.statusCode}`));
+      }
+    });
+  });
+}
+
 export function upload(
   ak: string,
   sk: string,
@@ -17,6 +50,7 @@ export function upload(
   destDir: string,
   overwrite: boolean,
   ignoreSourceMap: boolean,
+  cdnDomain: string,
   onProgress: (srcFile: string, destFile: string) => void,
   onComplete: () => void,
   onFail: (errorInfo: any) => void,
@@ -27,6 +61,8 @@ export function upload(
   const config = new qiniu.conf.Config();
   const uploader = new qiniu.form_up.FormUploader(config);
 
+  const htmlFiles: string[] = [];
+
   const tasks = files
     .map((file) => {
       const relativePath = path.relative(baseDir, path.dirname(file));
@@ -36,15 +72,17 @@ export function upload(
 
       if (ignoreSourceMap && file.endsWith('.map')) return null;
 
+      if (file.endsWith('.html')) {
+        htmlFiles.push(key);
+      }
+
       const task = (): Promise<any> => new Promise((resolve, reject) => {
-        // 根据是否覆盖生成不同的token
         const token = overwrite
           ? genToken(bucket, ak, sk, key)
           : genToken(bucket, ak, sk);
 
         const putExtra = new qiniu.form_up.PutExtra();
         uploader.putFile(token, key, file, putExtra, (err, body, info) => {
-          // 构建详细的错误信息
           const fileInfo = `file: ${file}, key: ${key}, overwrite: ${overwrite}`;
 
           if (err) {
@@ -52,7 +90,6 @@ export function upload(
             return reject(new Error(errorMessage));
           }
 
-          // 检查HTTP状态码
           if (!info || typeof info.statusCode === 'undefined') {
             const errorMessage = `Upload failed - ${fileInfo}, reason: no response info received`;
             return reject(new Error(errorMessage));
@@ -63,7 +100,6 @@ export function upload(
             return resolve({ file, to: key });
           }
 
-          // 其他状态码的详细错误信息
           let errorDetails = '';
           if (body) {
             try {
@@ -83,5 +119,16 @@ export function upload(
     })
     .filter((item) => !!item) as (() => Promise<any>)[];
 
-  pAll(tasks, { concurrency: 5 }).then(onComplete).catch(onFail);
+  pAll(tasks, { concurrency: 5 })
+    .then(async () => {
+      if (htmlFiles.length > 0) {
+        try {
+          await refreshHtmlFiles(ak, sk, cdnDomain, htmlFiles);
+        } catch (error) {
+          console.error('HTML文件刷新失败:', error);
+        }
+      }
+      onComplete();
+    })
+    .catch(onFail);
 }
