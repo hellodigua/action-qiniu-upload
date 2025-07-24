@@ -112,6 +112,28 @@ const token_1 = __nccwpck_require__(9961);
 function normalizePath(input) {
     return input.replace(/^\//, '');
 }
+function refreshRootDirectory(ak, sk, cdnDomain) {
+    return new Promise((resolve, reject) => {
+        if (!cdnDomain) {
+            return resolve();
+        }
+        const mac = new qiniu_1.default.auth.digest.Mac(ak, sk);
+        const cdnManager = new qiniu_1.default.cdn.CdnManager(mac);
+        const dirsToRefresh = [`${cdnDomain}/`];
+        cdnManager.refreshDirs(dirsToRefresh, (err, respBody, respInfo) => {
+            if (err) {
+                return reject(err);
+            }
+            if (respInfo.statusCode === 200) {
+                console.log('网站根目录刷新成功');
+                resolve();
+            }
+            else {
+                reject(new Error(`根目录刷新失败，状态码: ${respInfo.statusCode}`));
+            }
+        });
+    });
+}
 function refreshHtmlFiles(ak, sk, cdnDomain, htmlFiles) {
     return new Promise((resolve, reject) => {
         if (!cdnDomain || htmlFiles.length === 0) {
@@ -224,10 +246,12 @@ function upload(ak, sk, bucket, srcDir, destDir, overwrite, ignoreSourceMap, cdn
         .then(() => __awaiter(this, void 0, void 0, function* () {
         if (htmlFiles.length > 0) {
             try {
-                // 先设置HTML文件的headers
+                // 设置HTML文件的headers
                 yield setHtmlFileHeaders(ak, sk, bucket, htmlFiles);
-                // 然后刷新CDN
+                // 刷新CDN中的html文件
                 yield refreshHtmlFiles(ak, sk, cdnDomain, htmlFiles);
+                // 刷新根目录
+                yield refreshRootDirectory(ak, sk, cdnDomain);
             }
             catch (error) {
                 console.error('HTML文件处理失败:', error);
