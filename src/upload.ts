@@ -22,16 +22,14 @@ function refreshHtmlFiles(
 
     const mac = new qiniu.auth.digest.Mac(ak, sk);
     const cdnManager = new qiniu.cdn.CdnManager(mac);
-    
-    const urlsToRefresh = htmlFiles.map(file => `${cdnDomain}/${file}`);
-    
+    const urlsToRefresh = htmlFiles.map((file) => `${cdnDomain}/${file}`);
     cdnManager.refreshUrls(urlsToRefresh, (err, respBody, respInfo) => {
       if (err) {
         return reject(err);
       }
-      
+
       if (respInfo.statusCode === 200) {
-        htmlFiles.forEach(file => {
+        htmlFiles.forEach((file) => {
           console.log(`${file} 刷新成功`);
         });
         resolve();
@@ -39,6 +37,60 @@ function refreshHtmlFiles(
         reject(new Error(`CDN刷新失败，状态码: ${respInfo.statusCode}`));
       }
     });
+  });
+}
+
+// 为HTML文件设置headers
+function setHtmlFileHeaders(
+  ak: string,
+  sk: string,
+  bucket: string,
+  htmlFiles: string[],
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (htmlFiles.length === 0) {
+      return resolve();
+    }
+
+    const mac = new qiniu.auth.digest.Mac(ak, sk);
+    const config = new qiniu.conf.Config();
+    const bucketManager = new qiniu.rs.BucketManager(mac, config);
+
+    const headers = {
+      'Cache-Control': 'public, max-age=1800',
+    };
+
+    const promises = htmlFiles.map(
+      (key) => new Promise<void>((resolveFile, rejectFile) => {
+        bucketManager.changeHeaders(
+          bucket,
+          key,
+          headers,
+          (err, respBody, respInfo) => {
+            if (err) {
+              return rejectFile(err);
+            }
+
+            if (respInfo.statusCode === 200) {
+              console.log(`${key} headers 修改成功`);
+              resolveFile();
+            } else {
+              console.log(
+                `${key} headers 修改失败，状态码: ${respInfo.statusCode}`,
+              );
+              console.log(respBody);
+              rejectFile(
+                new Error(`Headers修改失败，状态码: ${respInfo.statusCode}`),
+              );
+            }
+          },
+        );
+      }),
+    );
+
+    Promise.all(promises)
+      .then(() => resolve())
+      .catch((err) => reject(err));
   });
 }
 
@@ -86,7 +138,9 @@ export function upload(
           const fileInfo = `file: ${file}, key: ${key}, overwrite: ${overwrite}`;
 
           if (err) {
-            const errorMessage = `Upload failed - ${fileInfo}, error: ${err.message || err}, stack: ${err.stack || 'no stack'}`;
+            const errorMessage = `Upload failed - ${fileInfo}, error: ${
+              err.message || err
+            }, stack: ${err.stack || 'no stack'}`;
             return reject(new Error(errorMessage));
           }
 
@@ -123,9 +177,12 @@ export function upload(
     .then(async () => {
       if (htmlFiles.length > 0) {
         try {
+          // 先设置HTML文件的headers
+          await setHtmlFileHeaders(ak, sk, bucket, htmlFiles);
+          // 然后刷新CDN
           await refreshHtmlFiles(ak, sk, cdnDomain, htmlFiles);
         } catch (error) {
-          console.error('HTML文件刷新失败:', error);
+          console.error('HTML文件处理失败:', error);
         }
       }
       onComplete();
